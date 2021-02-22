@@ -13,31 +13,68 @@ resource "aws_vpc" "vpc-ajay" {
 }
 
 resource "aws_subnet" "subnet-public" {
-    vpc_id = "${aws_vpc.vpc-ajay.id}"
-    cidr_block = "10.0.1.0/24"
+    vpc_id = aws_vpc.vpc-ajay.id
+    cidr_block = "10.0.0.0/24"
     map_public_ip_on_launch = "true"
     availability_zone = "ap-south-1a"
 }
 
 resource "aws_internet_gateway" "first-igw" {
-    vpc_id = "${aws_vpc.vpc-ajay.id}"
+    vpc_id = aws_vpc.vpc-ajay.id
 }
 
 resource "aws_route_table" "public-rt" {
-    vpc_id = "${aws_vpc.vpc-ajay.id}"
+    vpc_id = aws_vpc.vpc-ajay.id
     route {
         cidr_block = "0.0.0.0/0" 
-        gateway_id = "${aws_internet_gateway.first-igw.id}" 
+        gateway_id = aws_internet_gateway.first-igw.id 
     }
 }
 
-resource "aws_route_table_association" "public-crt-public-subnet"{
-    subnet_id = "${aws_subnet.subnet-public.id}"
-    route_table_id = "${aws_route_table.public-rt.id}"
+resource "aws_route_table_association" "public-rt-public-subnet"{
+    subnet_id = aws_subnet.subnet-public.id
+    route_table_id = aws_route_table.public-rt.id
+}
+
+resource "aws_subnet" "subnet_private" {
+  vpc_id     = aws_vpc.vpc-ajay.id
+  cidr_block = "10.0.1.0/24"
+  availability_zone = "ap-south-1a"
+
+  tags = {
+    Name = "NAT-ed Subnet"
+  }
+}
+
+resource "aws_eip" "nat_gw_eip" {
+  vpc = true
+}
+
+resource "aws_nat_gateway" "nat_gw" {
+  allocation_id = aws_eip.nat_gw_eip.id
+  subnet_id     = aws_subnet.subnet-public.id
+}
+
+resource "aws_route_table" "private_RT" {
+    vpc_id = aws_vpc.vpc-ajay.id
+
+    route {
+        cidr_block = "0.0.0.0/0"
+        nat_gateway_id = aws_nat_gateway.nat_gw.id
+    }
+
+    tags = {
+        Name = "Main Route Table for NAT-ed subnet"
+    }
+}
+
+resource "aws_route_table_association" "private_RT_private_subnet" {
+    subnet_id = aws_subnet.subnet_private.id
+    route_table_id = aws_route_table.private_RT.id
 }
 
 resource "aws_security_group" "my-sg" {
-    vpc_id = "${aws_vpc.vpc-ajay.id}"
+    vpc_id = aws_vpc.vpc-ajay.id
     
     egress {
         from_port = 0
@@ -58,13 +95,20 @@ resource "aws_security_group" "my-sg" {
         protocol = "tcp"
         cidr_blocks = ["0.0.0.0/0"]
     }
+
+        ingress {
+        from_port = 3306
+        to_port = 3306
+        protocol = "tcp"
+        cidr_blocks = ["0.0.0.0/0"]
+    }
 }
 
 resource "aws_instance" "web1" {
     ami = "ami-08e0ca9924195beba"
     instance_type = "t2.micro"
-    subnet_id = "${aws_subnet.subnet-public.id}"
-    vpc_security_group_ids = ["${aws_security_group.my-sg.id}"]
+    subnet_id = aws_subnet.subnet-public.id
+    vpc_security_group_ids = [ aws_security_group.my-sg.id ]
     key_name = "mykey"
     # nginx installation
  #   provisioner "file" {
@@ -81,5 +125,17 @@ resource "aws_instance" "web1" {
     Terraform   = "true"
     Environment = "dev"
   }
+
+}
+
+resource "aws_db_instance" "default" {
+  engine         = "mysql"
+  engine_version = "5.6.17"
+  instance_class = "db.t1.micro"
+  name           = "initial_db"
+  username       = "rootuser"
+  password       = "rootpasswd"
+  publicly_accessible = false
+  vpc_security_group_ids = [ aws_security_group.my-sg.id ]
 
 }
